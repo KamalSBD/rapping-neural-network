@@ -1,17 +1,20 @@
-import pronouncing
+# Imports
 import markovify
 import re
+import pronouncing
 import random
 import numpy as np
 import os
 from keras.models import Sequential
 from keras.layers import LSTM
+import matplotlib.pyplot as plt
+from keras.callbacks import History
 
-depth = 4  # depth of the network. changing will require a retrain
-maxsyllables = 16  # maximum syllables per line. Change this freely without retraining the network
-train_mode = False
-artist = "jay_z"  # used when saving the trained model
-rap_file = "neural_rap.txt"  # where the rap is written to
+# These are just the parameters of the network.
+depth = 5  # depth of the network. changing will require a retrain
+maxsyllables = 13  # maximum syllables per line. Change this freely without retraining the network
+lyrics_length = 15 # number of lines in the song
+epochs_to_train = 5 # how many times the network trains on the whole dataset
 
 
 def create_network(depth):
@@ -34,15 +37,11 @@ def create_network(depth):
     model.compile(optimizer='rmsprop',
                   loss='mse')
 
-    if artist + ".rap" in os.listdir(".") and train_mode == False:
-        # loads the weights from the hdf5 file saved earlier
-        model.load_weights(str(artist + ".rap"))
-        print "loading saved network: " + str(artist) + ".rap"
     return model
 
 
 def markov(text_file):
-    read = open(text_file, "r").read()
+    read = lyrics_source
     # markovify goes line by line of the lyrics.txt file and
     # creates a model of the text which allows us to use
     # make_sentence() later on to create a bar for lyrics
@@ -75,21 +74,22 @@ def syllables(line):
 
 
 # writes a rhyme list to a rhymes file that allows for use when
-# building the dataset, and composing the rap
+# building the dataset, and composing the lyrics
+
 def rhymeindex(lyrics):
-    if str(artist) + ".rhymes" in os.listdir(".") and train_mode == False:
-        print "loading saved rhymes from " + str(artist) + ".rhymes"
-        return open(str(artist) + ".rhymes", "r").read().split("\n")
-    else:
+    #if str(artist) + ".rhymes" in os.listdir(".") and train_mode == False:
+    #    print "loading saved rhymes from " + str(artist) + ".rhymes"
+    #    return open(str(artist) + ".rhymes", "r").read().split("\n")
+    if True:
         rhyme_master_list = []
-        print "Alright, building the list of all the rhymes"
+        print ("Building the list of all the rhymes")
         for i in lyrics:
             # grabs the last word in each bar
             word = re.sub(r"\W+", '', i.split(" ")[-1]).lower()
             # pronouncing.rhymes gives us a word that rhymes with the word being passed in
             rhymeslist = pronouncing.rhymes(word)
             # need to convert the unicode rhyme words to UTF8
-            rhymeslist = [x.encode('UTF8') for x in rhymeslist]
+
             # rhymeslistends contains the last two characters for each word
             # that could potentially rhyme with our word
             rhymeslistends = []
@@ -117,10 +117,10 @@ def rhymeindex(lyrics):
         # correct rhymes
         rhymelist = [x[::-1] for x in reverselist]
 
-        f = open(str(artist) + ".rhymes", "w")
-        f.write("\n".join(rhymelist))
-        f.close()
-        print rhymelist
+        #f = open(str(artist) + ".rhymes", "w")
+        #f.write("\n".join(rhymelist))
+        #f.close()
+        print (rhymelist)
         return rhymelist
 
 
@@ -129,7 +129,6 @@ def rhymeindex(lyrics):
 def rhyme(line, rhyme_list):
     word = re.sub(r"\W+", '', line.split(" ")[-1]).lower()
     rhymeslist = pronouncing.rhymes(word)
-    rhymeslist = [x.encode('UTF8') for x in rhymeslist]
     rhymeslistends = []
     for i in rhymeslist:
         rhymeslistends.append(i[-2:])
@@ -148,9 +147,9 @@ def rhyme(line, rhyme_list):
 # grabs each line of the lyrics file and puts them
 # in their own index of a list, and then removes any empty lines
 # from the lyrics file and returns the list as bars
-def split_lyrics_file(text_file):
-    text = open(text_file).read()
-    text = text.split("\n")
+def split_lyrics_file(text):
+   #  text = open(text_file).read()
+   #  text = text.split("\n")
     while "" in text:
         text.remove("")
     return text
@@ -160,9 +159,9 @@ def split_lyrics_file(text_file):
 def generate_lyrics(lyrics_file):
     bars = []
     last_words = []
-    lyriclength = len(open(lyrics_file).read().split("\n"))
+    lyriclength = len(lyrics_file)
     count = 0
-    markov_model = markov(lyrics_file)
+    markov_model = markov((". ").join(lyrics_file) + ".")
 
     while len(bars) < lyriclength / 9 and count < lyriclength * 2:
         # By default, the make_sentence method tries, a maximum of 10 times per invocation,
@@ -192,6 +191,10 @@ def generate_lyrics(lyrics_file):
                 count += 1
 
     return bars
+
+
+
+
 
 
 # used to construct the 2x2 inputs for the LSTMs
@@ -242,8 +245,8 @@ def build_dataset(lyrics, rhyme_list):
     return x_data, y_data
 
 # only used when not training
-def compose_rap(lines, rhyme_list, lyrics_file, model):
-    rap_vectors = []
+def compose_lyrics(lines, rhyme_list, lyrics_file, model):
+    lyrics_vectors = []
     human_lyrics = split_lyrics_file(lyrics_file)
 
     # choose a random line to start in from given lyrics
@@ -260,25 +263,25 @@ def compose_rap(lines, rhyme_list, lyrics_file, model):
     # it's reshaped as a (1, 2, 2) so that the model can predict each
     # 2x2 matrix of [syllable, rhyme_index] pairs
     starting_vectors = model.predict(np.array([starting_input]).flatten().reshape(4, 2, 2))
-    rap_vectors.append(starting_vectors)
+    lyrics_vectors.append(starting_vectors)
 
-    for i in range(49):
-        rap_vectors.append(model.predict(np.array([rap_vectors[-1]]).flatten().reshape(4, 2, 2)))
+    for i in range(lyrics_length):
+        lyrics_vectors.append(model.predict(np.array([lyrics_vectors[-1]]).flatten().reshape(4, 2, 2)))
 
-    return rap_vectors
+    return lyrics_vectors
 
 
 def vectors_into_song(vectors, generated_lyrics, rhyme_list):
-    print "\n\n"
-    print "About to write rap (this could take a moment)..."
-    print "\n\n"
+    print ("\n\n")
+    print ("About to write lyrics (this could take a moment)...")
+    print ("\n\n")
 
     # compare the last words to see if they are the same, if they are
     # increment a penalty variable which grants penalty points for being
     # uncreative
-    def last_word_compare(rap, line2):
+    def last_word_compare(lyrics, line2):
         penalty = 0
-        for line1 in rap:
+        for line1 in lyrics:
             word1 = line1.split(" ")[-1]
             word2 = line2.split(" ")[-1]
 
@@ -319,11 +322,11 @@ def vectors_into_song(vectors, generated_lyrics, rhyme_list):
         line_list = [line, syllables(line), rhyme(line, rhyme_list)]
         dataset.append(line_list)
 
-    rap = []
+    lyrics = []
 
     vector_halves = []
     for vector in vectors:
-        # vectors are the 2x2 rap_vectors (predicted bars) generated by compose_rap()
+        # vectors are the 2x2 lyrics_vectors (predicted bars) generated by compose_lyrics()
         # separate every vector into a half (essentially one bar) where each
         # has a pair of [syllables, rhyme_index]
         vector_halves.append(list(vector[0][0]))
@@ -332,15 +335,15 @@ def vectors_into_song(vectors, generated_lyrics, rhyme_list):
     for vector in vector_halves:
         # Each vector (predicted bars) is scored against every generated bar ('item' below)
         # to find the generated bar that best matches (highest score) the vector predicted
-        # by the model. This bar is then added to the final rap and also removed from the
-        # generated lyrics (dataset) so that we don't get duplicate lines in the final rap.
+        # by the model. This bar is then added to the final lyrics and also removed from the
+        # generated lyrics (dataset) so that we don't get duplicate lines in the final lyrics.
         scorelist = []
         for item in dataset:
             # item is one of the generated bars from the Markov model
             line = item[0]
 
-            if len(rap) != 0:
-                penalty = last_word_compare(rap, line)
+            if len(lyrics) != 0:
+                penalty = last_word_compare(lyrics, line)
             else:
                 penalty = 0
             # calculate the score of the current line
@@ -356,57 +359,78 @@ def vectors_into_song(vectors, generated_lyrics, rhyme_list):
         max_score = max(fixed_score_list)
         for item in scorelist:
             if item[1] == max_score:
-                # append item[0] (the line) to the rap
-                rap.append(item[0])
-                print str(item[0])
+                # append item[0] (the line) to the lyrics
+                lyrics.append(item[0])
+                print (str(item[0]))
 
-                # remove the line we added to the rap so
+                # remove the line we added to the lyrics so
                 # it doesn't get chosen again
                 for i in dataset:
                     if item[0] == i[0]:
                         dataset.remove(i)
                         break
                 break
-    return rap
-
+    return lyrics
 
 def train(x_data, y_data, model):
-    # fit is used to train the model for 5 'epochs' (iterations) where
-    # the x_data is the training data, and the y_data is the target data
-    # x is the training and y is the target data
-    # batch_size is a subset of the training data (2 in this case)
-    # verbose simply shows a progress bar
-    model.fit(np.array(x_data), np.array(y_data),
-              batch_size=2,
-              epochs=5,
-              verbose=1)
+    # Define a callback to track training history
+    history = History()
+
+    # fit is used to train the model for 'epochs_to_train' epochs
+    model.fit(
+        np.array(x_data), np.array(y_data),
+        batch_size=4,
+        epochs=epochs_to_train,
+        verbose=1,
+        callbacks=[history],
+        validation_split=0.5023)
+
+
+
+    # Plot the training loss across epochs
+    plot_training_history(history)
+
     # save_weights saves the best weights from training to a hdf5 file
-    model.save_weights(artist + ".rap")
+    # model.save_weights(artist + ".lyrics")
+
+def plot_training_history(history):
+    plt.figure(figsize=[8, 6])
+
+    # Plot training loss
+
+    plt.plot(history.history['loss'], 'r', linewidth=2.0, label='Training Loss')
+
+    # Check if 'val_loss' is available in history.history
+    if 'val_loss' in history.history:
+        plt.plot(history.history['val_loss'], 'b', linewidth=2.0, label='Validation Loss')
+        plt.legend()
+
+    plt.title('Model loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.show()
 
 
-def main(depth, train_mode):
+
+
+
+def main(depth):
+    train_mode = True
     model = create_network(depth)
-    # change the lyrics file to the file with the lyrics you want to be trained on
-    text_file = "jayz_lyrics.txt"
 
-    if train_mode == True:
-        bars = split_lyrics_file(text_file)
+    text_file = lyrics_source
 
-    if train_mode == False:
-        bars = generate_lyrics(text_file)
+    bars = split_lyrics_file(text_file)
 
     rhyme_list = rhymeindex(bars)
-    if train_mode == True:
-        x_data, y_data = build_dataset(bars, rhyme_list)
-        train(x_data, y_data, model)
 
-    if train_mode == False:
-        vectors = compose_rap(bars, rhyme_list, text_file, model)
-        rap = vectors_into_song(vectors, bars, rhyme_list)
-        f = open(rap_file, "w")
-        for bar in rap:
-            f.write(bar)
-            f.write("\n")
+    x_data, y_data = build_dataset(bars, rhyme_list)
+    train(x_data, y_data, model)
+
+    bars = generate_lyrics(text_file)
+
+    vectors = compose_lyrics(bars, rhyme_list, text_file, model)
+    lyrics = vectors_into_song(vectors, bars, rhyme_list)
 
 
-main(depth, train_mode)
+main(depth)
